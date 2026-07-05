@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveQuiz - Real-time Multiplayer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
+        body { font-family: 'Poppins', sans-serif; }
+        .live-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    </style>
+</head>
+<body class="bg-zinc-950 text-white min-h-screen">
+    <div class="max-w-7xl mx-auto p-6">
+        <div class="flex justify-between items-center mb-8 border-b border-zinc-800 pb-6">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-gradient-to-br from-violet-500 to-fuchsia-500 rounded-2xl flex items-center justify-center text-3xl">🎯</div>
+                <div>
+                    <h1 class="text-4xl font-bold">LiveQuiz</h1>
+                    <p class="text-emerald-400 text-sm flex items-center gap-2">
+                        <span class="w-2 h-2 bg-emerald-400 rounded-full live-dot"></span> 
+                        REAL-TIME • UP TO 500 USERS
+                    </p>
+                </div>
+            </div>
+            <div class="flex gap-3 text-sm">
+                <div onclick="switchRole('presenter')" id="presenter-btn"
+                     class="cursor-pointer px-5 py-2.5 rounded-2xl bg-white text-zinc-900 font-semibold">Presenter</div>
+                <div onclick="switchRole('audience')" id="audience-btn"
+                     class="cursor-pointer px-5 py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700">Audience</div>
+            </div>
+        </div>
+
+        <!-- PRESENTER VIEW -->
+        <div id="presenter-view">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                <!-- Controls -->
+                <div class="lg:col-span-4 bg-zinc-900 rounded-3xl p-8">
+                    <h2 class="text-2xl font-bold mb-6">Presenter Controls</h2>
+                    <button onclick="startQuiz()" class="w-full mb-4 py-4 bg-emerald-600 hover:bg-emerald-700 rounded-2xl font-bold text-lg">START QUIZ</button>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <button onclick="nextQuestion()" class="py-4 bg-violet-600 hover:bg-violet-700 rounded-2xl font-semibold">Next Question</button>
+                        <button onclick="revealAnswer()" class="py-4 bg-amber-500 hover:bg-amber-600 rounded-2xl font-semibold">Reveal Answer</button>
+                    </div>
+                    <button onclick="endQuiz()" class="w-full mt-4 py-4 bg-red-500 hover:bg-red-600 rounded-2xl font-semibold">End Quiz</button>
+                </div>
+
+                <!-- Question -->
+                <div class="lg:col-span-8 bg-zinc-900 rounded-3xl p-8">
+                    <div class="flex justify-between mb-6">
+                        <div id="q-counter" class="text-xl font-bold">Question 0 / 50</div>
+                        <div id="timer" class="text-4xl font-mono font-bold text-emerald-400">30</div>
+                    </div>
+                    <div id="question-text" class="text-3xl font-semibold min-h-[110px] mb-8"></div>
+                    <div id="options" class="space-y-3"></div>
+                    <div class="mt-8 text-emerald-400 flex items-center gap-3">
+                        <i class="fas fa-users"></i> <span id="live-responses">0</span> answered
+                    </div>
+                </div>
+            </div>
+
+            <!-- Leaderboard -->
+            <div class="mt-8 bg-zinc-900 rounded-3xl p-8">
+                <h3 class="font-bold text-2xl mb-6 flex items-center gap-3"><i class="fas fa-trophy"></i> Live Leaderboard</h3>
+                <div id="leaderboard" class="space-y-3"></div>
+            </div>
+        </div>
+
+        <!-- AUDIENCE VIEW -->
+        <div id="audience-view" class="hidden">
+            <div class="max-w-2xl mx-auto bg-zinc-900 rounded-3xl p-10">
+                <div id="audience-status" class="text-center mb-8 text-emerald-400 font-semibold">Connected • Waiting for question...</div>
+                <div id="audience-question" class="text-3xl font-semibold text-center mb-10 min-h-[120px]"></div>
+                <div id="audience-options" class="space-y-4"></div>
+                
+                <div class="mt-10 text-center">
+                    <div class="text-5xl font-bold text-emerald-400" id="my-score">0</div>
+                    <div class="text-zinc-400 text-sm">YOUR SCORE</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let currentQuestion = null;
+        let myScore = 0;
+        let role = 'presenter';
+
+        function switchRole(newRole) {
+            role = newRole;
+            document.getElementById('presenter-view').classList.toggle('hidden', newRole !== 'presenter');
+            document.getElementById('audience-view').classList.toggle('hidden', newRole !== 'audience');
+            
+            if (newRole === 'presenter') socket.emit('join-as-presenter');
+            else {
+                const name = prompt("Enter your display name:", "Audience Member");
+                socket.emit('join-as-audience', name || "Guest");
+            }
+        }
+
+        function startQuiz() {
+            socket.emit('start-quiz');
+        }
+
+        function nextQuestion() {
+            socket.emit('next-question');
+        }
+
+        function revealAnswer() {
+            socket.emit('reveal-answer');
+        }
+
+        function endQuiz() {
+            if (confirm("End the quiz?")) socket.emit('end-quiz');
+        }
+
+        socket.on('quiz-state', (state) => {
+            if (state.currentQuestion) showQuestion(state.currentQuestion);
+            if (state.leaderboard) updateLeaderboard(state.leaderboard);
+        });
+
+        socket.on('new-question', (q) => {
+            currentQuestion = q;
+            showQuestion(q);
+        });
+
+        function showQuestion(q) {
+            document.getElementById('question-text').textContent = q.q;
+            document.getElementById('q-counter').textContent = `Question ${q.id} / 50`;
+
+            const container = document.getElementById('options');
+            container.innerHTML = '';
+            q.options.forEach((opt, i) => {
+                const btn = document.createElement('button');
+                btn.className = "w-full p-6 text-left rounded-2xl border border-zinc-700 hover:border-violet-500 transition-all text-lg";
+                btn.textContent = `${String.fromCharCode(65 + i)}. ${opt}`;
+                btn.onclick = () => submitAnswer(i);
+                container.appendChild(btn);
+            });
+        }
+
+        function submitAnswer(idx) {
+            socket.emit('submit-answer', { selectedIndex: idx });
+            myScore += 50;
+            document.getElementById('my-score').textContent = myScore;
+        }
+
+        function updateLeaderboard(lb) {
+            const container = document.getElementById('leaderboard');
+            container.innerHTML = '';
+            lb.forEach((player, i) => {
+                const el = document.createElement('div');
+                el.className = `flex justify-between items-center px-6 py-4 rounded-2xl bg-zinc-800 ${i === 0 ? 'ring-2 ring-amber-400' : ''}`;
+                el.innerHTML = `
+                    <div class="flex items-center gap-4">
+                        <span class="text-3xl">${player.avatar}</span>
+                        <div>
+                            <div class="font-semibold">${player.name}</div>
+                            <div class="text-xs text-zinc-500">#${i+1}</div>
+                        </div>
+                    </div>
+                    <div class="text-3xl font-bold text-emerald-400">${player.score}</div>
+                `;
+                container.appendChild(el);
+            });
+        }
+
+        window.onload = () => switchRole('presenter');
+    </script>
+</body>
+</html>
